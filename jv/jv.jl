@@ -13,7 +13,7 @@ http://quant-econ.net/jl/jv.html
 =#
 
 using Distributions
-using Grid
+using Interpolations
 
 # TODO: the three lines below will allow us to use the non brute-force
 #       approach in bellman operator. I have commented it out because
@@ -46,7 +46,7 @@ where
 * `pi(s)` : probability of new offer given search level s
 * `x(1 - \phi - s)` : wage
 * `G(x, \phi)` : new human capital when current job retained
-* `U` : Random variable with distribution F -- new draw of human capita
+* `U` : Random variable with distribution F -- new draw of human capital
 
 ##### Fields
 
@@ -164,7 +164,7 @@ function bellman_operator!(jv::JvWorker, V::Vector,
     nodes, weights = jv.quad_nodes, jv.quad_weights
 
     # prepare interpoland of value function
-    Vf = CoordInterpGrid(jv.x_grid, V, BCnearest, InterpLinear)
+    Vf = extrapolate(interpolate((jv.x_grid, ), V, Gridded(Linear())), Flat())
 
     # instantiate variables so they are available outside loop and exist
     # within it
@@ -203,7 +203,13 @@ function bellman_operator!(jv::JvWorker, V::Vector,
 
         function w(z)
             s, phi = z
-            h(u) = Vf[max(G(x, phi), u)] .* pdf(F, u)
+            function h(u)
+              out = similar(u)
+              for i in 1:length(u)
+                out[i] = Vf[max(G(x, phi), u[i])] * pdf(F, u[i])
+              end
+              out
+            end
             integral = do_quad(h, nodes, weights)
             q = pi_func(s) * integral + (1.0 - pi_func(s)) * Vf[G(x, phi)]
 
