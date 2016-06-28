@@ -205,8 +205,8 @@ function bellman_operator!(jv::JvWorker, V::Vector,
             s, phi = z
             function h(u)
               out = similar(u)
-              for i in 1:length(u)
-                out[i] = Vf[max(G(x, phi), u[i])] * pdf(F, u[i])
+              for j in 1:length(u)
+                out[j] = Vf[max(G(x, phi), u[j])] * pdf(F, u[j])
               end
               out
             end
