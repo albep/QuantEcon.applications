@@ -24,8 +24,6 @@ using Interpolations
 # @pyimport scipy.optimize as opt
 # minimize = opt.minimize
 
-epsilon = 1e-4  # a small number, used in optimization routine
-
 """
 A Jovanovic-type model of employment with on-the-job search.
 
@@ -59,6 +57,7 @@ where
 - `F::UnivariateDistribution` : A univariate distribution from which the value of new job offers is drawn
 - `quad_nodes::Vector` : Quadrature nodes for integrating over phi
 - `quad_weights::Vector` : Quadrature weights for integrating over phi
+- `epsilon::Float64` : A small number, used in optimization routine
 
 """
 type JvWorker
@@ -71,6 +70,7 @@ type JvWorker
     F::UnivariateDistribution
     quad_nodes::Vector
     quad_weights::Vector
+    epsilon::Float64
 end
 
 """
@@ -82,6 +82,7 @@ Constructor with default values for `JvWorker`
  - `alpha::Real(0.6)` : Parameter in human capital transition function
  - `bet::Real(0.96)` : Discount factor in (0, 1)
  - `grid_size::Int(50)` : Number of points in discrete grid for `x`
+ - `epsilon::Float(1e-4)` : A small number, used in optimization routine
 
 ##### Notes
 
@@ -89,7 +90,7 @@ There is also a version of this function that accepts keyword arguments for
 each parameter
 
 """
-function JvWorker(A=1.4, alpha=0.6, bet=0.96, grid_size=50)
+function JvWorker(A=1.4, alpha=0.6, bet=0.96, grid_size=50, epsilon=1e-4)
     G(x, phi) = A .* (x .* phi).^alpha
     pi_func = sqrt
     F = Beta(2, 2)
@@ -109,13 +110,11 @@ function JvWorker(A=1.4, alpha=0.6, bet=0.96, grid_size=50)
     # CoordInterpGrid below
     x_grid = collect(linspace(epsilon, grid_max, grid_size))
 
-    JvWorker(A, alpha, bet, x_grid, G, pi_func, F, nodes, weights)
+    JvWorker(A, alpha, bet, x_grid, G, pi_func, F, nodes, weights, epsilon)
 end
 
 # make kwarg version
-JvWorker(;A=1.4, alpha=0.6, bet=0.96, grid_size=50) = JvWorker(A, alpha, bet,
-                                                               grid_size)
-
+JvWorker(;A=1.4, alpha=0.6, bet=0.96, grid_size=50, epsilon=1e-4) = JvWorker(A, alpha, bet, grid_size, epsilon)
 
 # TODO: as of 2014-08-14 there is no simple constrained optimizer in Julia
 #       so, we default to the brute force gridsearch approach for this
@@ -160,7 +159,7 @@ function bellman_operator!(jv::JvWorker, V::Vector,
         error(m)
     end
     # simplify notation
-    G, pi_func, F, bet = jv.G, jv.pi_func, jv.F, jv.bet
+    G, pi_func, F, bet, epsilon = jv.G, jv.pi_func, jv.F, jv.bet, jv.epsilon
     nodes, weights = jv.quad_nodes, jv.quad_weights
 
     # prepare interpoland of value function
@@ -263,7 +262,7 @@ Extract the greedy policy (policy function) of the model.
 
 ##### Arguments
 
-- `cp::CareerWorkerProblem` : Instance of `CareerWorkerProblem`
+- `cp::JvWorker` : Instance of `CareerWorkerProblem`
 - `v::Vector`: Current guess for the value function
 - `out::Tuple(Vector, Vector)` : Storage for output of policy rule
 
