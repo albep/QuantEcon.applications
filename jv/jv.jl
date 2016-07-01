@@ -15,14 +15,7 @@ http://quant-econ.net/jl/jv.html
 using Distributions
 using Interpolations
 
-# TODO: the three lines below will allow us to use the non brute-force
-#       approach in bellman operator. I have commented it out because
-#       I am waiting on a simple constrained optimizer to be written in
-#       pure Julia
-
-# using PyCall
-# @pyimport scipy.optimize as opt
-# minimize = opt.minimize
+# NOTE: only brute-force approach is available in bellman operator. Waiting on a simple constrained optimizer to be written in pure Julia
 
 """
 A Jovanovic-type model of employment with on-the-job search.
@@ -116,10 +109,6 @@ end
 # make kwarg version
 JvWorker(;A=1.4, alpha=0.6, bet=0.96, grid_size=50, epsilon=1e-4) = JvWorker(A, alpha, bet, grid_size, epsilon)
 
-# TODO: as of 2014-08-14 there is no simple constrained optimizer in Julia
-#       so, we default to the brute force gridsearch approach for this
-#       problem
-
 # NOTE: this function is not type stable because it returns either
 #       Array{Float64, 2} or (Array{Float64, 2}, Array{Float64, 2})
 #       depending on the value of ret_policies. This is probably not a
@@ -133,8 +122,6 @@ Apply the Bellman operator for a given model and initial value.
 - `V::Vector`: Current guess for the value function
 - `out::Union{Vector, Tuple{Vector, Vector}}` : Storage for output. Note that
 there are two policy rules, but one value function
-- `;brute_force::Bool(true)`: Whether to use a brute force grid search
-algorithm or a solver from scipy.
 - `;ret_policy::Bool(false)`: Toggles return of value or policy functions
 
 ##### Returns
@@ -144,20 +131,12 @@ policy function, otherwise the value function is stored in `out`.
 
 ##### Notes
 
-Currently, the `brute_force` parameter must be `true`. We are waiting for a
-constrained optimization routine to emerge in pure Julia. Once that happens,
-we will re-activate this option.
+Currently, only the brute-force approach is available. We are waiting on a simple constrained optimizer to be written in pure Julia
 
 """
 function bellman_operator!(jv::JvWorker, V::Vector,
-                           out::Union{Vector, Tuple{Vector, Vector}};
-                           brute_force=true, ret_policies=false)
+                           out::Union{Vector, Tuple{Vector, Vector}}; ret_policies=false)
 
-    if !(brute_force)
-        m = "Only brute_force method active now. Waiting on a pure julia"
-        m *+ " constrained optimization routine to disable"
-        error(m)
-    end
     # simplify notation
     G, pi_func, F, bet, epsilon = jv.G, jv.pi_func, jv.F, jv.bet, jv.epsilon
     nodes, weights = jv.quad_nodes, jv.quad_weights
@@ -188,15 +167,12 @@ function bellman_operator!(jv::JvWorker, V::Vector,
         new_V = out
     end
 
-    # instantiate the linesearch variables if we need to
-    if brute_force
-        max_val = -1.0
-        cur_val = 0.0
-        max_s = 1.0
-        max_phi = 1.0
-        search_grid = linspace(epsilon, 1.0, 15)
-    end
-
+    # instantiate the linesearch variables
+    max_val = -1.0
+    cur_val = 0.0
+    max_s = 1.0
+    max_phi = 1.0
+    search_grid = linspace(epsilon, 1.0, 15)
 
     for (i, x) in enumerate(jv.x_grid)
 
@@ -215,25 +191,17 @@ function bellman_operator!(jv::JvWorker, V::Vector,
             return - x * (1.0 - phi - s) - bet * q
         end
 
-        if brute_force
-            for s in search_grid
-                for phi in search_grid
-                    if s + phi <= 1.0
-                        cur_val = -w((s, phi))
-                    else
-                        cur_val = -1.0
-                    end
-                    if cur_val > max_val
-                        max_val, max_s, max_phi = cur_val, s, phi
-                    end
+        for s in search_grid
+            for phi in search_grid
+                if s + phi <= 1.0
+                    cur_val = -w((s, phi))
+                else
+                    cur_val = -1.0
+                end
+                if cur_val > max_val
+                    max_val, max_s, max_phi = cur_val, s, phi
                 end
             end
-        else
-            max_s, max_phi = minimize(w, guess, constraints=constraints;
-                                      disp=0, method="SLSQP")["x"]
-
-            max_val = -w((max_s, max_phi), x, a, b, Vf, jv)
-
         end
 
         if ret_policies
@@ -245,15 +213,13 @@ function bellman_operator!(jv::JvWorker, V::Vector,
 end
 
 
-function bellman_operator(jv::JvWorker, V::Vector; brute_force=true,
-                          ret_policies=false)
+function bellman_operator(jv::JvWorker, V::Vector; ret_policies=false)
     if ret_policies
         out = (similar(V), similar(V))
     else
         out = similar(V)
     end
-    bellman_operator!(jv, V, out, brute_force=brute_force,
-                     ret_policies=ret_policies)
+    bellman_operator!(jv, V, out, ret_policies=ret_policies)
     return out
 end
 
@@ -271,11 +237,10 @@ Extract the greedy policy (policy function) of the model.
 None, `out` is updated in place to hold the policy function
 
 """
-function get_greedy!(jv::JvWorker, V::Vector, out::Tuple{Vector, Vector};
-                     brute_force=true)
+function get_greedy!(jv::JvWorker, V::Vector, out::Tuple{Vector, Vector})
     bellman_operator!(jv, V, out, ret_policies=true)
 end
 
-function get_greedy(jv::JvWorker, V::Vector; brute_force=true)
+function get_greedy(jv::JvWorker, V::Vector)
     bellman_operator(jv, V, ret_policies=true)
 end
