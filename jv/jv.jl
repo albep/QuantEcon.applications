@@ -262,7 +262,7 @@ Extract the greedy policy (policy function) of the model.
 
 ##### Arguments
 
-- `cp::JvWorker` : Instance of `CareerWorkerProblem`
+- `cp::JvWorker` : Instance of `JvWorker`
 - `v::Vector`: Current guess for the value function
 - `out::Tuple(Vector, Vector)` : Storage for output of policy rule
 
