@@ -109,33 +109,25 @@ end
 # make kwarg version
 JvWorker(;A=1.4, alpha=0.6, bet=0.96, grid_size=50, epsilon=1e-4) = JvWorker(A, alpha, bet, grid_size, epsilon)
 
-# NOTE: this function is not type stable because it returns either
-#       Array{Float64, 2} or (Array{Float64, 2}, Array{Float64, 2})
-#       depending on the value of ret_policies. This is probably not a
-#       huge deal, but it is something to be aware of
 """
-Apply the Bellman operator for a given model and initial value.
+Apply the Bellman operator for a given model and initial value, returning only the value function
 
 ##### Arguments
 
 - `jv::JvWorker` : Instance of `JvWorker`
 - `V::Vector`: Current guess for the value function
-- `out::Union{Vector, Tuple{Vector, Vector}}` : Storage for output. Note that
-there are two policy rules, but one value function
-- `;ret_policy::Bool(false)`: Toggles return of value or policy functions
+- `new_V::Vector` : Storage for updated value function
 
 ##### Returns
 
-None, `out` is updated in place. If `ret_policy == true` out is filled with the
-policy function, otherwise the value function is stored in `out`.
+None, `new_V` is updated in place with the value function.
 
 ##### Notes
 
 Currently, only the brute-force approach is available. We are waiting on a simple constrained optimizer to be written in pure Julia
 
 """
-function bellman_operator!(jv::JvWorker, V::Vector,
-                           out::Union{Vector, Tuple{Vector, Vector}}; ret_policies=false)
+function bellman_operator!(jv::JvWorker, V::Vector, new_V::Vector)
 
     # simplify notation
     G, pi_func, F, bet, epsilon = jv.G, jv.pi_func, jv.F, jv.bet, jv.epsilon
@@ -143,29 +135,6 @@ function bellman_operator!(jv::JvWorker, V::Vector,
 
     # prepare interpoland of value function
     Vf = extrapolate(interpolate((jv.x_grid, ), V, Gridded(Linear())), Flat())
-
-    # instantiate variables so they are available outside loop and exist
-    # within it
-    if ret_policies
-        if !(typeof(out) <: Tuple{Vector, Vector})
-            msg = "You asked for policies, but only provided one output array"
-            msg *= "\nthere are two policies so two arrays must be given"
-            error(msg)
-        end
-        s_policy, phi_policy = out[1], out[2]
-    else
-        c1(z) = 1.0 - sum(z)
-        c2(z) = z[1] - epsilon
-        c3(z) = z[2] - epsilon
-        guess = (0.2, 0.2)
-        constraints = [Dict("type" => "ineq", "fun"=> i) for i in [c1, c2, c3]]
-        if typeof(out) <: Tuple
-            msg = "Multiple output arrays given. There is only one value"
-            msg = " function.\nDid you mean to pass ret_policies=true?"
-            error(msg)
-        end
-        new_V = out
-    end
 
     # instantiate the linesearch variables
     max_val = -1.0
@@ -204,14 +173,80 @@ function bellman_operator!(jv::JvWorker, V::Vector,
             end
         end
 
-        if ret_policies
-            s_policy[i], phi_policy[i] = max_s, max_phi
-        else
-            new_V[i] = max_val
-        end
+        new_V[i] = max_val
     end
 end
 
+"""
+Apply the Bellman operator for a given model and initial value, returning policies
+
+##### Arguments
+
+- `jv::JvWorker` : Instance of `JvWorker`
+- `V::Vector`: Current guess for the value function
+- `out::Tuple{Vector, Vector}` : Storage for the two policy rules
+
+##### Returns
+
+None, `out` is updated in place with the two policy functions.
+
+##### Notes
+
+Currently, only the brute-force approach is available. We are waiting on a simple constrained optimizer to be written in pure Julia
+
+"""
+function bellman_operator!(jv::JvWorker, V::Vector, out::Tuple{Vector, Vector})
+
+    # simplify notation
+    G, pi_func, F, bet, epsilon = jv.G, jv.pi_func, jv.F, jv.bet, jv.epsilon
+    nodes, weights = jv.quad_nodes, jv.quad_weights
+
+    # prepare interpoland of value function
+    Vf = extrapolate(interpolate((jv.x_grid, ), V, Gridded(Linear())), Flat())
+
+    # instantiate variables
+    s_policy, phi_policy = out[1], out[2]
+
+    # instantiate the linesearch variables
+    max_val = -1.0
+    cur_val = 0.0
+    max_s = 1.0
+    max_phi = 1.0
+    search_grid = linspace(epsilon, 1.0, 15)
+
+    for (i, x) in enumerate(jv.x_grid)
+
+        function w(z)
+            s, phi = z
+            function h(u)
+              out = similar(u)
+              for j in 1:length(u)
+                out[j] = Vf[max(G(x, phi), u[j])] * pdf(F, u[j])
+              end
+              out
+            end
+            integral = do_quad(h, nodes, weights)
+            q = pi_func(s) * integral + (1.0 - pi_func(s)) * Vf[G(x, phi)]
+
+            return - x * (1.0 - phi - s) - bet * q
+        end
+
+        for s in search_grid
+            for phi in search_grid
+                if s + phi <= 1.0
+                    cur_val = -w((s, phi))
+                else
+                    cur_val = -1.0
+                end
+                if cur_val > max_val
+                    max_val, max_s, max_phi = cur_val, s, phi
+                end
+            end
+        end
+
+      s_policy[i], phi_policy[i] = max_s, max_phi
+  end
+end
 
 function bellman_operator(jv::JvWorker, V::Vector; ret_policies=false)
     if ret_policies
@@ -219,28 +254,6 @@ function bellman_operator(jv::JvWorker, V::Vector; ret_policies=false)
     else
         out = similar(V)
     end
-    bellman_operator!(jv, V, out, ret_policies=ret_policies)
+    bellman_operator!(jv, V, out)
     return out
-end
-
-"""
-Extract the greedy policy (policy function) of the model.
-
-##### Arguments
-
-- `cp::JvWorker` : Instance of `JvWorker`
-- `v::Vector`: Current guess for the value function
-- `out::Tuple(Vector, Vector)` : Storage for output of policy rule
-
-##### Returns
-
-None, `out` is updated in place to hold the policy function
-
-"""
-function get_greedy!(jv::JvWorker, V::Vector, out::Tuple{Vector, Vector})
-    bellman_operator!(jv, V, out, ret_policies=true)
-end
-
-function get_greedy(jv::JvWorker, V::Vector)
-    bellman_operator(jv, V, ret_policies=true)
 end
